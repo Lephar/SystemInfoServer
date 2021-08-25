@@ -22,7 +22,7 @@ var portString string
 var initializationMessage string
 var homepageMessageTemplate string
 
-const applicationVersion = "v0.3.0"
+const applicationVersion = "v0.3.2"
 
 // To add new endpoints to the server, simply add a new Endpoint
 // instance at the end of this array and implement the corresponding
@@ -45,7 +45,7 @@ var endpoints = []Endpoint{
 
 func sendResponse(w http.ResponseWriter, message string) {
 	if _, err := fmt.Fprintln(w, message); err != nil {
-		log.Fatalln(err)
+		log.Println(err)
 	}
 }
 
@@ -102,20 +102,25 @@ func parseSystemdOutput(array []byte) (string, error) {
 
 func durationCallback(w http.ResponseWriter, _ *http.Request) {
 	log.Println("Duration request")
+
 	// time is optional and the default command line argument of systemd-analyze,
 	// so it is not necessary to add it but this makes it more future-proof in case
 	// default parameters are changed in the next releases
 	cmd := exec.Command("systemd-analyze", "time")
 
-	if out, err := cmd.CombinedOutput(); err != nil {
-		log.Fatalln(err)
-	} else {
-		message, err := parseSystemdOutput(out)
-		if err != nil {
-			log.Fatalln(err)
-		}
-		sendResponse(w, message)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Println(err)
+		return
 	}
+
+	message, err := parseSystemdOutput(out)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	sendResponse(w, message)
 }
 
 func initialize() {
