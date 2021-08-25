@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/Lephar/SystemInfoServer/timeutil"
 )
 
 type Endpoint struct {
@@ -14,10 +17,11 @@ type Endpoint struct {
 	callback func(w http.ResponseWriter, r *http.Request)
 }
 
+var portString string
 var initializationMessage string
-var homepageMessage string
+var homepageMessageTemplate string
 
-const applicationVersion = "v0.1.0"
+const applicationVersion = "v0.3.0"
 
 var endpoints = []Endpoint{
 	{
@@ -35,7 +39,7 @@ var endpoints = []Endpoint{
 	},
 }
 
-func respondRequest(w http.ResponseWriter, message string) {
+func sendResponse(w http.ResponseWriter, message string) {
 	if _, err := fmt.Fprintln(w, message); err != nil {
 		log.Fatalln(err)
 	}
@@ -43,16 +47,36 @@ func respondRequest(w http.ResponseWriter, message string) {
 
 func homepageCallback(w http.ResponseWriter, r *http.Request) {
 	log.Println("Homepage request")
-	message := strings.ReplaceAll(homepageMessage, "${URL}", r.Host)
-	respondRequest(w, message)
+	message := strings.ReplaceAll(homepageMessageTemplate, "${URL}", r.Host)
+	sendResponse(w, message)
 }
 
 func versionCallback(w http.ResponseWriter, _ *http.Request) {
 	log.Println("Version request")
-	respondRequest(w, applicationVersion)
+	sendResponse(w, applicationVersion)
 }
 
-//TODO: Parse the output
+func parseSystemdOutput(array []byte) string {
+	var kernelTimeValue float64
+	var userspaceTimeValue float64
+
+	tokens := strings.Split(string(array), " ")
+
+	for i := 0; i < len(tokens); i++ {
+		if tokens[i] == "(kernel)" {
+			kernelTimeValue = timeutil.ParseDuration(tokens[i-1])
+		} else if tokens[i] == "(userspace)" {
+			userspaceTimeValue = timeutil.ParseDuration(tokens[i-1])
+		}
+	}
+
+	kernelTime := timeutil.FormatDuration(kernelTimeValue)
+	userspaceTime := timeutil.FormatDuration(userspaceTimeValue)
+	totalTime := timeutil.FormatDuration(kernelTimeValue + userspaceTimeValue)
+
+	return fmt.Sprintf("%s (kernel) + %s (userspace) = %s (total)", kernelTime, userspaceTime, totalTime)
+}
+
 func durationCallback(w http.ResponseWriter, _ *http.Request) {
 	log.Println("Duration request")
 	cmd := exec.Command("systemd-analyze", "time")
@@ -60,13 +84,20 @@ func durationCallback(w http.ResponseWriter, _ *http.Request) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		log.Fatalln(err)
 	} else {
-		respondRequest(w, string(out))
+		message := parseSystemdOutput(out)
+		sendResponse(w, message)
 	}
 }
 
 func initialize() {
-	initializationMessage = "Server ready, endpoints:"
-	homepageMessage = "Visit"
+	if len(os.Args) == 1 {
+		portString = "8080"
+	} else {
+		portString = os.Args[1]
+	}
+
+	initializationMessage = "Server is ready at port " + portString + ", endpoints are:"
+	homepageMessageTemplate = "Visit"
 
 	for i := 0; i < len(endpoints); i++ {
 		endpoint := &endpoints[i]
@@ -76,12 +107,12 @@ func initialize() {
 		}
 
 		initializationMessage += " " + endpoint.path
-		homepageMessage += " ${URL}" + endpoint.path + " for " + endpoint.info
+		homepageMessageTemplate += " ${URL}" + endpoint.path + " for " + endpoint.info
 
 		if i < len(endpoints)-1 {
-			homepageMessage += ","
+			homepageMessageTemplate += ","
 		} else {
-			homepageMessage += "."
+			homepageMessageTemplate += "."
 		}
 	}
 }
@@ -94,7 +125,7 @@ func registerCallbacks() {
 
 func startServer() {
 	log.Println(initializationMessage)
-	log.Fatalln(http.ListenAndServe(":8080", nil))
+	log.Fatalln(http.ListenAndServe(":"+portString, nil))
 }
 
 //TODO: Add shutdown
