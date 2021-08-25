@@ -7,8 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-
-	"github.com/Lephar/SystemInfoServer/timeutil"
+	"time"
 )
 
 type Endpoint struct {
@@ -56,25 +55,31 @@ func versionCallback(w http.ResponseWriter, _ *http.Request) {
 	sendResponse(w, applicationVersion)
 }
 
-func parseSystemdOutput(array []byte) string {
-	var kernelTimeValue float64
-	var userspaceTimeValue float64
+func parseSystemdOutput(array []byte) (string, error) {
+	var kernelTime time.Duration
+	var userspaceTime time.Duration
+	var err error
 
 	tokens := strings.Split(string(array), " ")
 
 	for i := 0; i < len(tokens); i++ {
-		if tokens[i] == "(kernel)" {
-			kernelTimeValue = timeutil.ParseDuration(tokens[i-1])
-		} else if tokens[i] == "(userspace)" {
-			userspaceTimeValue = timeutil.ParseDuration(tokens[i-1])
+		switch tokens[i] {
+		case "(kernel)":
+			kernelTime, err = time.ParseDuration(tokens[i-1])
+		case "(userspace)":
+			userspaceTime, err = time.ParseDuration(tokens[i-1])
+		}
+
+		if err != nil {
+			return "", err
 		}
 	}
 
-	kernelTime := timeutil.FormatDuration(kernelTimeValue)
-	userspaceTime := timeutil.FormatDuration(userspaceTimeValue)
-	totalTime := timeutil.FormatDuration(kernelTimeValue + userspaceTimeValue)
+	kernelTimeSeconds := kernelTime.Seconds()
+	userspaceTimeSeconds := userspaceTime.Seconds()
+	totalTimeSeconds := kernelTimeSeconds + userspaceTimeSeconds
 
-	return fmt.Sprintf("%s (kernel) + %s (userspace) = %s (total)", kernelTime, userspaceTime, totalTime)
+	return fmt.Sprintf("%Gs (kernel) + %Gs (userspace) = %Gs (total)", kernelTimeSeconds, userspaceTimeSeconds, totalTimeSeconds), nil
 }
 
 func durationCallback(w http.ResponseWriter, _ *http.Request) {
@@ -84,7 +89,10 @@ func durationCallback(w http.ResponseWriter, _ *http.Request) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		log.Fatalln(err)
 	} else {
-		message := parseSystemdOutput(out)
+		message, err := parseSystemdOutput(out)
+		if err != nil {
+			log.Fatalln(err)
+		}
 		sendResponse(w, message)
 	}
 }
