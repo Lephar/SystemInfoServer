@@ -5,45 +5,101 @@ import (
 	"log"
 	"net/http"
 	"os/exec"
+	"strings"
 )
+
+type Endpoint struct {
+	path     string
+	info     string
+	callback func(w http.ResponseWriter, r *http.Request)
+}
+
+var initializationMessage string
+var homepageMessage string
 
 const applicationVersion = "v0.1.0"
 
-func homepageCallback(w http.ResponseWriter, r *http.Request) {
-	log.Println("Homepage request")
-	fmt.Fprintln(w, "Visit /version for server version info and /duration for boot-up time")
+var endpoints = []Endpoint{
+	{
+		"/",
+		"homepage",
+		homepageCallback,
+	}, {
+		"/version",
+		"application version info",
+		versionCallback,
+	}, {
+		"/duration",
+		"system boot-up duration",
+		durationCallback,
+	},
 }
 
-func versionCallback(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("Version request")
-	fmt.Fprintln(w, applicationVersion)
+func respondRequest(w http.ResponseWriter, message string) {
+	if _, err := fmt.Fprintln(w, message); err != nil {
+		log.Fatalln(err)
+	}
+}
+
+func homepageCallback(w http.ResponseWriter, r *http.Request) {
+	log.Println("Homepage request")
+	message := strings.ReplaceAll(homepageMessage, "${URL}", r.Host)
+	respondRequest(w, message)
+}
+
+func versionCallback(w http.ResponseWriter, _ *http.Request) {
+	log.Println("Version request")
+	respondRequest(w, applicationVersion)
 }
 
 //TODO: Parse the output
-func durationCallback(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("Duration request")
+func durationCallback(w http.ResponseWriter, _ *http.Request) {
+	log.Println("Duration request")
 	cmd := exec.Command("systemd-analyze", "time")
-	out, err := cmd.CombinedOutput()
 
-	if err != nil {
-		log.Fatal(err)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		log.Fatalln(err)
+	} else {
+		respondRequest(w, string(out))
 	}
-	fmt.Fprintln(w, string(out))
+}
+
+func initialize() {
+	initializationMessage = "Server ready, endpoints:"
+	homepageMessage = "Visit"
+
+	for i := 0; i < len(endpoints); i++ {
+		endpoint := &endpoints[i]
+
+		if endpoint.path == "/" {
+			continue
+		}
+
+		initializationMessage += " " + endpoint.path
+		homepageMessage += " ${URL}" + endpoint.path + " for " + endpoint.info
+
+		if i < len(endpoints)-1 {
+			homepageMessage += ","
+		} else {
+			homepageMessage += "."
+		}
+	}
 }
 
 func registerCallbacks() {
-	http.HandleFunc("/", homepageCallback)
-	http.HandleFunc("/version", versionCallback)
-	http.HandleFunc("/duration", durationCallback)
+	for _, endpoint := range endpoints {
+		http.HandleFunc(endpoint.path, endpoint.callback)
+	}
 }
 
-//TODO: Add time info to logs
 func startServer() {
-	log.Println("Server ready, endpoints: /version and /duration")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	log.Println(initializationMessage)
+	log.Fatalln(http.ListenAndServe(":8080", nil))
 }
 
+//TODO: Add shutdown
 func main() {
+	initialize()
 	registerCallbacks()
 	startServer()
 }
